@@ -119,6 +119,13 @@ When sharing outputs, attribute as: "Contains Environment Agency data
 sourced from the Hydrology API, licensed under the Open Government Licence
 v3.0."
 
+## Nearby boreholes
+
+See [`docs/nearby_boreholes.md`](docs/nearby_boreholes.md) for other EA
+groundwater stations near Witt Road, Winterslow (including Nelson Arms
+Winterslow, ~1.2km away and in the same Chalk block as Lopcombe Corner),
+plus a few older BGS-referenced boreholes that aren't in this API.
+
 ## Possible next step
 
 Pre-1990s manual dip data for some stations lives in the separate National

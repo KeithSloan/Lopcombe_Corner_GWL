@@ -37,6 +37,20 @@ SAMPLE_STATION_RESPONSE = {
     ],
 }
 
+SAMPLE_DIPPED_ONLY_STATION_RESPONSE = {
+    "meta": {"limit": 100},
+    "items": [
+        {
+            "@id": "http://environment.data.gov.uk/hydrology/id/stations/06f4a7b9-0e81-4d98-abef-ca4818d1cf65",
+            "label": "Nelson Arms Winterslow",
+            "notation": "06f4a7b9-0e81-4d98-abef-ca4818d1cf65",
+            "wiskiID": "141811463",
+        }
+    ],
+}
+
+EMPTY_RESPONSE = {"meta": {}, "items": []}
+
 
 def _make_client_with_response(payload):
     response = MagicMock()
@@ -93,6 +107,46 @@ class GetStationTests(unittest.TestCase):
         client, _session = _make_client_with_response({"meta": {}, "items": []})
         with self.assertRaises(api.HydrologyAPIError):
             client.get_station("E00000")
+
+    def test_falls_back_to_wiskiid_when_no_stationreference_match(self):
+        # Dipped-only sites (e.g. Nelson Arms Winterslow) have no stationReference,
+        # only a wiskiID and notation - stationReference lookup misses, wiskiID hits.
+        response_empty = MagicMock()
+        response_empty.json.return_value = EMPTY_RESPONSE
+        response_empty.raise_for_status.return_value = None
+        response_hit = MagicMock()
+        response_hit.json.return_value = SAMPLE_DIPPED_ONLY_STATION_RESPONSE
+        response_hit.raise_for_status.return_value = None
+
+        session = MagicMock()
+        session.get.side_effect = [response_empty, response_hit]
+        client = api.HydrologyClient(session=session)
+
+        station = client.get_station("141811463")
+        self.assertEqual(station["label"], "Nelson Arms Winterslow")
+        first_call_params = session.get.call_args_list[0].kwargs["params"]
+        second_call_params = session.get.call_args_list[1].kwargs["params"]
+        self.assertEqual(first_call_params, {"stationReference": "141811463"})
+        self.assertEqual(second_call_params, {"wiskiID": "141811463"})
+
+    def test_falls_back_to_notation_path_when_no_param_match(self):
+        response_empty = MagicMock()
+        response_empty.json.return_value = EMPTY_RESPONSE
+        response_empty.raise_for_status.return_value = None
+        response_hit = MagicMock()
+        response_hit.json.return_value = SAMPLE_DIPPED_ONLY_STATION_RESPONSE
+        response_hit.raise_for_status.return_value = None
+
+        session = MagicMock()
+        session.get.side_effect = [response_empty, response_empty, response_hit]
+        client = api.HydrologyClient(session=session)
+
+        station = client.get_station("06f4a7b9-0e81-4d98-abef-ca4818d1cf65")
+        self.assertEqual(station["label"], "Nelson Arms Winterslow")
+        third_call_args = session.get.call_args_list[2]
+        self.assertTrue(
+            third_call_args.args[0].endswith("/id/stations/06f4a7b9-0e81-4d98-abef-ca4818d1cf65")
+        )
 
 
 if __name__ == "__main__":

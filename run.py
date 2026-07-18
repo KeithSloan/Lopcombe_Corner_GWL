@@ -19,7 +19,8 @@ DEFAULT_STATION = "E14150"
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--station", default=DEFAULT_STATION,
-                         help=f"EA station reference (default: {DEFAULT_STATION})")
+                         help="EA station reference, wiskiID, or notation (GUID) - some "
+                              f"manual/dipped-only sites have no reference (default: {DEFAULT_STATION})")
     parser.add_argument("--start", default=None,
                          help="Earliest date (YYYY-MM-DD) for the full-history chart/table; "
                               "defaults to the start of each series' record")

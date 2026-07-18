@@ -57,6 +57,20 @@ class AnnualStatsTests(unittest.TestCase):
         self.assertEqual(row_2025["max"], 5.0)
         self.assertEqual(row_2024["count"], 2)
 
+    def test_works_after_concat_with_an_empty_series(self):
+        # Regression: a dipped-only station has no logged series at all, so
+        # run.py concatenates real dipped readings with an empty logged
+        # frame. If the empty frame's dateTime column isn't datetime64,
+        # concat silently downgrades the combined column to `object` and
+        # `.dt.year` blows up.
+        dipped_df = analysis.readings_to_dataframe([
+            {"date": "2024-03-01", "dateTime": "2024-03-01T09:00:00", "value": 15.0, "quality": "Good"},
+        ])
+        empty_logged_df = analysis.fetch_series(client=None, measures=[])
+        combined = pd.concat([dipped_df, empty_logged_df], ignore_index=True)
+        stats = analysis.annual_stats(combined, percentile=90)
+        self.assertEqual(stats[stats["year"] == 2024].iloc[0]["max"], 15.0)
+
 
 class LastNDaysTests(unittest.TestCase):
     def test_filters_to_trailing_window(self):

@@ -6,11 +6,34 @@ from . import api
 
 READING_COLUMNS = ["dateTime", "date", "value", "quality"]
 
+_EMPTY_DTYPES = {
+    "dateTime": "datetime64[ns]",
+    "date": "datetime64[ns]",
+    "value": "float64",
+    "quality": "object",
+}
+
+
+def _empty_readings_frame(extra_columns=()):
+    """An empty readings DataFrame with real dtypes (not `object`) on every column.
+
+    A plain `pd.DataFrame(columns=[...])` defaults every column to `object`
+    dtype, which silently downgrades `dateTime` out of datetime64 the moment
+    it's `pd.concat`-ed with a real (non-empty) readings frame - breaking
+    `.dt` accessors downstream. This matters whenever a station has no
+    readings for one series (e.g. a dipped-only station has no logged
+    series at all).
+    """
+    dtypes = dict(_EMPTY_DTYPES)
+    for col in extra_columns:
+        dtypes[col] = "object"
+    return pd.DataFrame({col: pd.Series(dtype=dtype) for col, dtype in dtypes.items()})
+
 
 def readings_to_dataframe(readings):
     """Convert a list of reading dicts from the API into a DataFrame sorted by time."""
     if not readings:
-        return pd.DataFrame(columns=READING_COLUMNS)
+        return _empty_readings_frame()
     df = pd.DataFrame(readings)
     df["dateTime"] = pd.to_datetime(df["dateTime"])
     df["date"] = pd.to_datetime(df["date"])
@@ -117,7 +140,7 @@ def fetch_series(client, measures, mineq_date=None, max_date=None, time=None, li
             df["measure"] = measure.get("notation") or api.measure_notation(measure["@id"])
             frames.append(df)
     if not frames:
-        return pd.DataFrame(columns=READING_COLUMNS + ["measure"])
+        return _empty_readings_frame(extra_columns=["measure"])
     return pd.concat(frames, ignore_index=True).sort_values("dateTime").reset_index(drop=True)
 
 
