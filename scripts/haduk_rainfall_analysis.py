@@ -3,13 +3,14 @@
 
 Inputs
   data/haduk/lopcombe_haduk1km_monthly_rainfall.csv  (from haduk_extract_cell.py)
+  output/levels/winter_summary.csv                   (from winter_summary.py)
 Outputs (in --outdir)
   lopcombe_winter_rain_vs_peak.csv    winter rainfall totals and peak level, 1963/64-2024/25
   haduk_results.json                  all statistics
   Lopcombe_HadUK_rainfall_cyclicity.png
 
-Winter Y = October (Y-1) to March (Y). Peak levels: manual-dip annual maxima
-1964-1999 and corrected logger winter peaks 2001-2025 (winter 1999/2000 omitted).
+Winter Y = October (Y-1) to March (Y). Peak level = highest reading October-May in the
+full EA record (manual dips before the logger, daily logger from 1999/2000).
 Significance of periodogram peaks uses Monte Carlo (shuffled = white noise,
 fitted AR(1) = red noise).
 
@@ -31,18 +32,10 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 # ----------------------------------------------------------------- level data
-DIP_PEAKS = {1964: 84.76, 1965: 80.18, 1966: 93.73, 1967: 94.44, 1968: 87.78, 1969: 92.38,
-             1970: 87.01, 1971: 89.48, 1972: 92.30, 1973: 81.97, 1974: 90.85, 1975: 95.12,
-             1976: 79.12, 1977: 89.05, 1978: 89.37, 1979: 90.22, 1980: 89.69, 1981: 87.71,
-             1982: 92.84, 1983: 89.07, 1984: 83.85, 1985: 86.84, 1986: 87.11, 1987: 89.41,
-             1988: 87.92, 1989: 82.78, 1990: 93.30, 1991: 80.06, 1992: 79.24, 1993: 87.02,
-             1994: 94.20, 1995: 98.26, 1996: 84.75, 1997: 79.84, 1998: 84.38, 1999: 92.59}
-LOGGER_PEAKS = {2001: 101.39, 2002: 85.33, 2003: 100.79, 2004: 82.72, 2005: 80.05, 2006: 79.33,
-                2007: 90.76, 2008: 85.76, 2009: 92.62, 2010: 88.15, 2011: 81.05, 2012: 78.4,
-                2013: 94.42, 2014: 102.01, 2015: 83.13, 2016: 88.15, 2017: 78.86, 2018: 89.54,
-                2019: 80.66, 2020: 97.25, 2021: 91.72, 2022: 79.61, 2023: 92.62, 2024: 97.54,
-                2025: 90.31}
-PEAKS = {**DIP_PEAKS, **LOGGER_PEAKS}
+# Winter peaks come from output/levels/winter_summary.csv (scripts/winter_summary.py),
+# built from the full EA record in data/levels/.
+PEAKS = {}
+SOURCE = {}
 THRESHOLD = 97.0  # Pitton groundwater flood threshold, mAOD
 
 OCT_MAR = [(-1, 10), (-1, 11), (-1, 12), (0, 1), (0, 2), (0, 3)]
@@ -151,18 +144,18 @@ def plot(res, table, path):
 
     a = ax[1]
     dd = table[table.peak_level_mAOD.notna()]
-    dip = dd.winter_end_year < 2000
+    dip = dd.winter_end_year.map(SOURCE).eq("dip").values
     rl = res["rain_level"]
     a.scatter(dd.oct_mar_mm[dip], dd.peak_level_mAOD[dip], s=30, color=blue, edgecolor=surf, lw=1,
-              label=f"Manual dips 1964–1999 (r = {rl['dip_r']:.2f})")
+              label=f"Manual-dip era 1963/64–1998/99 (r = {rl['dip_r']:.2f})")
     a.scatter(dd.oct_mar_mm[~dip], dd.peak_level_mAOD[~dip], s=30, color=orange, edgecolor=surf, lw=1,
-              label=f"Logger 2001–2025 (r = {rl['log_r']:.2f})")
+              label=f"Logger era 1999/2000–2024/25 (r = {rl['log_r']:.2f})")
     k, b = rl["fit"]
     xx = np.array([200, 900])
     a.plot(xx, k * xx + b, color=ink2, lw=1.2, ls="--")
     a.axhline(THRESHOLD, color=ink2, lw=1, ls=":")
     a.text(205, THRESHOLD + 0.3, "97 m Pitton flood threshold", color=ink2, fontsize=8)
-    offsets = {1995: (-48, 4), 2020: (6, -11), 2001: (-48, 4)}
+    offsets = {1995: (-48, 4), 2020: (6, -11), 2001: (-48, 4), 2024: (6, 2)}
     for yr, rr, lv in rl["breach"] + [[w, round(float(v)), PEAKS[w]] for w, v in rl["wet_no_breach"]]:
         a.annotate(f"{yr - 1}/{str(yr)[2:]}", (rr, lv), xytext=offsets.get(yr, (6, -3)),
                    textcoords="offset points", fontsize=7.5, color=ink)
@@ -199,12 +192,16 @@ def plot(res, table, path):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--csv", default="data/haduk/lopcombe_haduk1km_monthly_rainfall.csv")
+    ap.add_argument("--winters", default="output/levels/winter_summary.csv")
     ap.add_argument("--outdir", default="output/haduk")
     ap.add_argument("--nsim", type=int, default=5000, help="Monte Carlo runs (5000 takes ~2 min)")
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
     rng = np.random.default_rng(args.seed)
     os.makedirs(args.outdir, exist_ok=True)
+    ws = pd.read_csv(args.winters)
+    PEAKS.update({int(y): float(v) for y, v in zip(ws.winter_end_year, ws.peak_mAOD)})
+    SOURCE.update({int(y): src for y, src in zip(ws.winter_end_year, ws.main_source)})
 
     r = pd.read_csv(args.csv).set_index(["year", "month"])["rain_cell_mm"]
     first, last = r.index.get_level_values(0).min(), r.index.get_level_values(0).max()
@@ -232,7 +229,7 @@ def main():
     m = np.isin(years, lv_years)
     yy, rr = years[m], octmar[m]
     ll = np.array([PEAKS[y] for y in yy])
-    dip = yy < 2000
+    dip = np.array([SOURCE[int(y)] == "dip" for y in yy])
     breach = [(int(y), round(float(a)), float(b)) for y, a, b in zip(yy, rr, ll) if b >= THRESHOLD]
     min_breach_rain = min(b[1] for b in breach)
     res["rain_level"] = dict(

@@ -3,17 +3,19 @@
 
 Regresses the winter peak level on winter rainfall (HadUK-Grid 1 km) with and
 without the start-of-winter level (the autumn recession low, about 1 October),
-for the 25 logger-era winters 2000/01-2024/25.
+for every winter with rainfall data (1963/64-2024/25), or from --first-winter on.
 
 Inputs
   output/haduk/lopcombe_winter_rain_vs_peak.csv   (from haduk_rainfall_analysis.py)
-Outputs (in --outdir)
-  start_level_winters.csv        per-winter data, fitted values and residuals
-  start_level_results.json       model statistics
-  Lopcombe_start_level.png       chart
+  output/levels/winter_summary.csv                (from winter_summary.py)
+Outputs (in --outdir; names carry --tag)
+  start_level_winters<tag>.csv   per-winter data, fitted values and residuals
+  start_level_results<tag>.json  model statistics
+  Lopcombe_start_level<tag>.png  chart
 
 Usage:
-    python scripts/start_level_analysis.py [--csv ...] [--outdir output/haduk]
+    python scripts/start_level_analysis.py                                   # all winters
+    python scripts/start_level_analysis.py --first-winter 2000 --tag _logger # logger era only
 
 Requires: numpy, pandas, scipy, matplotlib
 """
@@ -28,13 +30,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-# Autumn recession low (mAOD), EA logger E14150, winter ending in year Y.
-# Extracted 7 Sep 2026 (lopcombe-rainfall-correlation-v2-octdec); flat recession, so ~ the 1 Oct level.
-START_LEVEL = {2001: 78.65, 2002: 78.55, 2003: 78.71, 2004: 78.30, 2005: 78.10, 2006: 77.70,
-               2007: 77.58, 2008: 78.92, 2009: 79.36, 2010: 78.17, 2011: 78.25, 2012: 77.99,
-               2013: 79.02, 2014: 78.58, 2015: 78.86, 2016: 78.56, 2017: 78.70, 2018: 78.47,
-               2019: 78.40, 2020: 77.93, 2021: 78.66, 2022: 78.67, 2023: 78.07, 2024: 78.92,
-               2025: 79.08}
+# Start level = level on 1 October (interpolated), from output/levels/winter_summary.csv
+# (scripts/winter_summary.py, built from the full EA record in data/levels/).
 THRESHOLD = 97.0
 
 
@@ -70,13 +67,19 @@ def nested_f(small, big, n, k_big):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--csv", default="output/haduk/lopcombe_winter_rain_vs_peak.csv")
+    ap.add_argument("--winters", default="output/levels/winter_summary.csv")
     ap.add_argument("--outdir", default="output/haduk")
+    ap.add_argument("--first-winter", type=int, default=0, help="first winter-end year to include")
+    ap.add_argument("--tag", default="", help="suffix for output file names")
     args = ap.parse_args()
     os.makedirs(args.outdir, exist_ok=True)
 
     t = pd.read_csv(args.csv)
-    d = t[t.winter_end_year.isin(list(START_LEVEL))].copy().reset_index(drop=True)
-    d["start_level_mAOD"] = d.winter_end_year.map(START_LEVEL)
+    ws = pd.read_csv(args.winters).set_index("winter_end_year")
+    d = t[t.winter_end_year >= args.first_winter].copy()
+    d["start_level_mAOD"] = d.winter_end_year.map(ws.start_level_1oct)
+    d["peak_level_mAOD"] = d.winter_end_year.map(ws.peak_mAOD)
+    d = d.dropna(subset=["start_level_mAOD", "peak_level_mAOD"]).reset_index(drop=True)
     y, n = d.peak_level_mAOD.values, len(d)
 
     models = {
@@ -98,20 +101,20 @@ def main():
     d["pred_rain_start"] = models["octmar_start"]["fitted"].round(2)
     d["resid_rain_only"] = models["octmar"]["resid"].round(2)
     d["resid_rain_start"] = models["octmar_start"]["resid"].round(2)
-    d.to_csv(os.path.join(args.outdir, "start_level_winters.csv"), index=False)
+    d.to_csv(os.path.join(args.outdir, f"start_level_winters{args.tag}.csv"), index=False)
 
     sl = d.start_level_mAOD
-    res = dict(n=n, start_level_mean=float(sl.mean()), start_level_sd=float(sl.std(ddof=1)),
+    res = dict(n=n, first=int(d.winter_end_year.min()), last=int(d.winter_end_year.max()), start_level_mean=float(sl.mean()), start_level_sd=float(sl.std(ddof=1)),
                start_level_min=float(sl.min()), start_level_max=float(sl.max()),
                corr_start_rain=float(np.corrcoef(sl, d.oct_mar_mm)[0, 1]),
                corr_start_peak=float(np.corrcoef(sl, y)[0, 1]),
                partial_r_start=partial_r, f_test_octmar=f_mar, f_test_octjan=f_jan,
                models={k: {kk: vv for kk, vv in m.items() if kk not in ("fitted", "resid")}
                        for k, m in models.items()})
-    with open(os.path.join(args.outdir, "start_level_results.json"), "w") as fh:
+    with open(os.path.join(args.outdir, f"start_level_results{args.tag}.json"), "w") as fh:
         json.dump(res, fh, indent=1)
 
-    plot(d, res, os.path.join(args.outdir, "Lopcombe_start_level.png"), r_s, r_y)
+    plot(d, res, os.path.join(args.outdir, f"Lopcombe_start_level{args.tag}.png"), r_s, r_y)
 
     m1, m2 = models["octmar"], models["octmar_start"]
     print(f"{n} winters. Start level {res['start_level_mean']:.2f} ± {res['start_level_sd']:.2f} m "
@@ -135,11 +138,12 @@ def plot(d, res, path, r_s, r_y):
     a.axhspan(m - sd, m + sd, color=grid, alpha=0.7, lw=0)
     a.plot(d.winter_end_year, d.start_level_mAOD, "o-", color=blue, ms=5, lw=1.5)
     a.axhline(m, color=ink2, lw=1, ls="--")
-    a.text(2000.6, m + sd + 0.05, f"mean {m:.2f} m ± {sd:.2f} m (shaded)", color=ink2, fontsize=8)
-    for y in (2007, 2009, 2020, 2023, 2025):
+    a.text(d.winter_end_year.min() + 0.6, m + sd + 0.05, f"mean {m:.2f} m ± {sd:.2f} m (shaded)", color=ink2, fontsize=8)
+    ext = list(d.nsmallest(2, "start_level_mAOD").winter_end_year) + list(d.nlargest(3, "start_level_mAOD").winter_end_year)
+    for y in ext:
         v = d.loc[d.winter_end_year == y, "start_level_mAOD"].iloc[0]
         a.annotate(lab(y), (y, v), xytext=(4, -10 if v < m else 5), textcoords="offset points", fontsize=7.5)
-    a.set_title("Start-of-winter level (autumn recession low), winters 2000/01–2024/25", loc="left",
+    a.set_title(f"Start-of-winter level (1 October), winters {lab(res['first'])}–{lab(res['last'])}", loc="left",
                 color=ink, fontsize=10)
     a.set_ylabel("mAOD")
     a.grid(axis="y", color=grid, lw=0.6)
@@ -154,7 +158,7 @@ def plot(d, res, path, r_s, r_y):
     a.plot(xx, k * xx, color=ink2, ls="--", lw=1.2, label=f"slope {k:.1f} m per m")
     a.axhline(0, color=ink2, lw=0.8)
     for i, y in enumerate(d.winter_end_year):
-        if y in (2003, 2009, 2020, 2023, 2024, 2007):
+        if y in (2003, 2009, 2020, 2023, 2024, 2007, 1995, 2014) or abs(r_y[i]) > 6:
             a.annotate(lab(y), (r_s[i], r_y[i]), xytext=(5, -3), textcoords="offset points", fontsize=7.5)
     a.set_title(f"Peak left unexplained by Oct–Mar rain vs start level (partial r = {res['partial_r_start']:.2f})",
                 loc="left", color=ink, fontsize=10)
@@ -171,7 +175,7 @@ def plot(d, res, path, r_s, r_y):
               label=f"Oct–Mar rain only (RMSE {res['models']['octmar']['rmse']:.1f} m)")
     a.scatter(d.peak_level_mAOD, d.pred_rain_start, s=30, color=orange, edgecolor=surf, lw=1,
               label=f"Rain + start level (RMSE {res['models']['octmar_start']['rmse']:.1f} m)")
-    for _, r in d[d.winter_end_year.isin([2023, 2009, 2003])].iterrows():
+    for _, r in d[d.winter_end_year.isin([2023, 2009])].iterrows():
         a.annotate("", (r.peak_level_mAOD, r.pred_rain_start), (r.peak_level_mAOD, r.pred_rain_only),
                    arrowprops=dict(arrowstyle="->", color=ink2, lw=0.9))
         a.annotate(lab(int(r.winter_end_year)), (r.peak_level_mAOD, r.pred_rain_start), xytext=(6, -3),
